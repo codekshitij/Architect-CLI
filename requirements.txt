@@ -1,0 +1,4 @@
+requests
+tree-sitter
+tree-sitter-language-pack
+jinja2
