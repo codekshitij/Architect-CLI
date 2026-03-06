@@ -1,0 +1,695 @@
+Architect-CLI v0.2 Change Log
+Date: 2026-03-06
+
+Overview
+- Refactored core execution flow into a clearer pipeline.
+- Improved dependency resolution correctness and reduced false matches.
+- Added safer/more flexible CLI options.
+- Hardened visualizer node identity and Mermaid security mode.
+- Updated README usage examples to match new CLI behavior.
+
+Files Changed
+1) main.py
+2) architect/visualizer.py
+3) README.md
+
+Detailed Changes
+
+1) main.py
+- Replaced monolithic main() logic with staged functions:
+  - discover_files(root_path)
+  - build_indexes(paths)
+  - extract_dependency_candidates(dep_text)
+  - resolve_edges(raw_deps, by_filename, by_stem)
+  - apply_focus(edges, focus)
+  - label_edges(edges, file_cache, brain, no_llm)
+  - build_parser()
+
+- Added path safety and argument validation:
+  - Validates --path exists.
+  - Validates --path is a directory.
+  - Validates --max-edges >= 0.
+
+- Added new CLI options:
+  - --output (custom HTML output path)
+  - --max-edges (limit number of edges analyzed)
+  - --no-llm (skip model labeling and use generic label)
+  - --open / --no-open (control browser launch)
+
+- Improved file discovery behavior:
+  - Uses directory pruning for ignored folders:
+    - .git
+    - node_modules
+    - venv
+    - __pycache__
+
+- Fixed filename collision bug:
+  - Previous approach keyed files by basename only (could overwrite files with same name in different folders).
+  - New approach indexes by full path and keeps lookup maps by filename/stem.
+
+- Improved dependency resolution strategy:
+  - Extracts candidate tokens from import/include strings.
+  - Normalizes candidates using basename/stem/path segments.
+  - Resolves against by_filename and by_stem maps.
+  - Deduplicates edges via set and returns stable sorted output.
+
+- Output behavior:
+  - Respects --output path.
+  - Creates output directory if needed.
+  - Opens browser only when open_browser is enabled.
+
+2) architect/visualizer.py
+- Added hashlib import.
+- Changed Mermaid security setting:
+  - securityLevel: 'loose' -> 'strict'
+
+- Fixed node ID collision risk:
+  - Previous ID generation used sanitized basename only.
+  - New ID generation uses sanitized basename + short MD5(path).
+  - Prevents collisions when files share same basename in different directories.
+
+3) README.md
+- Replaced old commented usage snippet with real command examples.
+- Added examples for:
+  - Normal run with --output
+  - No-LLM run with --no-open
+  - Focused run with --focus and --max-edges
+
+Validation Performed
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile main.py architect/scanner.py architect/brain.py architect/visualizer.py
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile main.py architect/visualizer.py
+
+- CLI verification:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --help
+  - Confirmed new flags are listed.
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path . --no-llm --no-open --output map.html --max-edges 50
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path . --no-llm --no-open --output map.html
+  - Result: map.html generated successfully.
+
+Notes
+- This log documents v0.2 baseline changes only.
+- Next layer planned (not implemented in this log):
+  - LLM label caching
+  - parallel scanning/labeling with retry/backoff
+  - unit tests for resolver behavior
+
+-------------------------------------------------------------------------------
+v0.2.1 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Implemented the next layer from the plan:
+  - label caching (JSON)
+  - parallel scanning and labeling
+  - retry/backoff hardening for model requests
+
+Files Changed
+1) main.py
+2) architect/brain.py
+3) README.md
+
+Detailed Changes
+
+1) main.py
+- Added persistent JSON cache support:
+  - DEFAULT_CACHE_FILE = .architect_cache.json
+  - load_cache(cache_file)
+  - save_cache(cache_file, cache_data)
+  - make_cache_key(model, source_path, source_code, target_path, target_code)
+  - Cache key includes model + file paths + code hashes for invalidation when code changes.
+
+- Added parallel scanning:
+  - scan_files(scanner, all_paths, workers)
+  - Uses ThreadPoolExecutor + as_completed when workers > 1.
+
+- Added parallel labeling:
+  - label_edges(..., workers, use_cache, cache_data)
+  - Reuses cached labels when available.
+  - Labels unresolved edges concurrently when workers > 1.
+
+- Added worker resolution and new CLI flags:
+  - --workers (0 = auto, otherwise exact thread count)
+  - --cache-file (path to JSON cache)
+  - --no-cache (disable cache read/write)
+
+- Added argument validation:
+  - --workers must be >= 0
+
+2) architect/brain.py
+- Replaced bare exception handling with explicit failure paths.
+- Added configurable transport controls:
+  - timeout
+  - max_retries
+  - retry_backoff_seconds
+- Added response.raise_for_status() and JSON parse handling.
+- Added linear backoff between retries.
+
+3) README.md
+- Added examples for:
+  - parallel workers + cache file
+  - disabling cache for debugging
+
+Validation Performed (v0.2.1)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile main.py architect/brain.py architect/visualizer.py architect/scanner.py
+- CLI verification:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --help
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path . --no-llm --no-open --workers 4 --output map.html
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path . --no-llm --no-open --workers 2 --cache-file .architect_cache.json --output map.html
+
+Remaining Next-Layer Item
+- Unit tests for resolver/cache behavior (pending)
+
+-------------------------------------------------------------------------------
+v0.2.2 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Implemented unit tests for resolver and cache behavior.
+- Added baseline coverage for cache key invalidation and no-LLM short-circuiting.
+
+Files Changed
+1) tests/test_main_pipeline.py (new)
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) tests/test_main_pipeline.py
+- Added 6 unit tests using Python's built-in unittest framework:
+  - test_resolve_edges_handles_duplicate_basenames
+  - test_make_cache_key_changes_with_code
+  - test_save_and_load_cache_round_trip
+  - test_label_edges_uses_cache_without_brain_call
+  - test_label_edges_populates_cache_on_miss
+  - test_label_edges_no_llm_short_circuit
+
+- Added a lightweight FakeBrain test double:
+  - tracks get_relationship call count
+  - provides deterministic labels without network calls
+
+- Coverage highlights:
+  - duplicate filename resolution correctness
+  - cache key changes when source code changes
+  - cache serialization/deserialization round-trip
+  - cached label hits avoid LLM calls
+  - cache miss writes new cache entries
+  - --no-llm path returns deterministic dependency labels
+
+Validation Performed (v0.2.2)
+- Unit tests:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+  - Result: Ran 6 tests, all passed.
+
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile tests/test_main_pipeline.py main.py
+
+Status
+- Next-layer test milestone completed.
+- Rolling log continues in this file for future increments.
+
+-------------------------------------------------------------------------------
+v0.2.3 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Upgraded generated graph HTML from basic output to interactive report quality.
+- Added polished visual design, graph controls, grouping, and stronger text sanitization.
+
+Files Changed
+1) architect/visualizer.py
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/visualizer.py
+- Rebuilt HTML template as a full report layout:
+  - left control sidebar + right graph canvas
+  - responsive grid behavior for desktop/mobile
+  - typography upgrade (Space Grotesk + JetBrains Mono)
+  - layered gradient background and card-style panels
+
+- Added report metadata chips:
+  - node count
+  - edge count
+  - group count
+
+- Added interactive controls:
+  - flow direction selector (LR, TD, RL)
+  - edge label visibility toggle
+  - live re-render via Mermaid without regenerating Python output
+
+- Added folder-based graph grouping:
+  - computes top-level group from relative path
+  - emits Mermaid subgraphs per group
+  - styles root vs file groups using Mermaid class definitions
+
+- Improved sanitization and serialization:
+  - new _sanitize_label() for edge labels
+  - new _sanitize_text() for node/group names
+  - JSON payloads passed into template (nodes_json, edges_json, groups_json)
+
+- Rendering engine updates:
+  - Mermaid starts in manual render mode (startOnLoad: false)
+  - strict security mode retained
+  - custom theme variables for consistent visual identity
+
+Validation Performed (v0.2.3)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/visualizer.py main.py
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path . --no-llm --no-open --output map.html
+  - Result: map.html generated successfully with new interactive UI.
+
+-------------------------------------------------------------------------------
+v0.2.4 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Improved edge label quality to reduce generic, business-style descriptions.
+- Added cache versioning so old low-quality labels do not persist after prompt upgrades.
+
+Files Changed
+1) architect/brain.py
+2) main.py
+3) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/brain.py
+- Reworked prompt and system message for stricter output:
+  - relation direction clarified: File A references/imports File B
+  - output constrained to JSON with key: label
+  - style constrained to concise technical wording
+
+- Added deterministic output controls:
+  - temperature lowered to 0.1
+  - num_predict limited for short responses
+
+- Added label normalization pipeline:
+  - strips markdown/code fences
+  - parses JSON when present
+  - removes invalid chars and collapses whitespace
+  - enforces concise output length
+  - detects generic phrases (e.g. "provides tools", "financial analysis")
+  - fallback format on weak output: "<source> uses <target>"
+
+2) main.py
+- Updated make_cache_key() to include cache_salt.
+- label_edges() now includes brain.cache_salt in cache-key generation.
+- Effect: cache invalidates automatically when label policy changes.
+
+Validation Performed (v0.2.4)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile main.py architect/brain.py architect/visualizer.py tests/test_main_pipeline.py
+
+- Unit tests:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+  - Result: Ran 6 tests, all passed.
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path . --output map.html --no-open
+  - Result: map.html generated successfully with updated labeling behavior.
+
+-------------------------------------------------------------------------------
+v0.2.5 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Switched to evidence-first relationship labels so edges are concrete and readable.
+- Reduced generic labels by preferring deterministic import/include hints.
+
+Files Changed
+1) main.py
+2) tests/test_main_pipeline.py
+3) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) main.py
+- Added relationship_hint(dep_text, target_path) to produce concrete labels:
+  - imports <module>
+  - imports from <module>
+  - includes <header>
+  - uses <target>
+
+- Updated resolve_edges() to return both:
+  - edges list
+  - edge_hints map keyed by (source, target)
+
+- Updated apply_focus() to keep hints aligned with filtered edges.
+
+- Updated label_edges() to prioritize deterministic hints:
+  - non-generic hints (imports/includes) are used directly
+  - generic hints can still be refined by LLM
+  - no-LLM mode now emits hint-based labels instead of plain "dependency"
+
+2) tests/test_main_pipeline.py
+- Updated tests for new function signatures and hint-first behavior.
+- Verified no-LLM uses concrete hint labels.
+
+Validation Performed (v0.2.5)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile main.py architect/brain.py tests/test_main_pipeline.py architect/visualizer.py
+
+- Unit tests:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+  - Result: Ran 6 tests, all passed.
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/toshi --output map.html --no-open --no-cache
+  - Labels observed in map.html: imports from analysis, imports from filingsqa, imports from financials, imports from search
+
+-------------------------------------------------------------------------------
+v0.2.6 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Switched to LLM-first detailed relationship labels while preserving concrete import hints.
+- Added cleanup for noisy model artifacts in labels.
+
+Files Changed
+1) architect/brain.py
+2) main.py
+3) tests/test_main_pipeline.py
+4) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/brain.py
+- Prompt updated for detailed labels:
+  - output target: 7-12 words
+  - include target module name
+  - code-level purpose, not generic prose
+
+- Added hint-aware LLM call and fallback generation.
+- Added label cleanup rules:
+  - remove `label...` prefixes
+  - normalize `.py`/`...py` token artifacts
+  - preserve concise technical phrasing
+
+- Cache policy bumped:
+  - cache_salt = label_policy_v4_detailed_clean
+
+2) main.py
+- label_edges() now always uses LLM when enabled and passes dependency hint into model.
+- Cache key now includes hint, so cached labels remain consistent with hint context.
+
+3) tests/test_main_pipeline.py
+- Updated FakeBrain signature for optional hint parameter.
+- Updated cache-key tests to include hint component.
+
+Validation Performed (v0.2.6)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/brain.py main.py
+
+- Unit tests:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+  - Result: Ran 6 tests, all passed.
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/toshi --output map.html --no-open --no-cache
+  - Labels observed in map.html:
+    - server imports analysis for financial calculations
+    - imports from filingsqa for filingsqa integration in server
+    - server imports search for company search functionality
+    - server imports financials for financial data tools
+
+-------------------------------------------------------------------------------
+v0.2.7 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Redesigned the graph report to a dark, pro-grade visual theme.
+- Improved contrast and graph readability while preserving all existing controls.
+
+Files Changed
+1) architect/visualizer.py
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/visualizer.py
+- Switched CSS palette from light to dark UI tokens:
+  - dark gradient canvas
+  - glass-style dark panels
+  - brighter text and muted secondary text
+  - cyan/emerald accent system
+
+- Upgraded component styling:
+  - chips, select, legend code blocks now dark-themed
+  - graph panel uses layered dark background
+  - Mermaid container uses bordered dark card for focus
+
+- Updated Mermaid theme variables for dark mode:
+  - node fill/border/text colors tuned for contrast
+  - cluster and edge-label backgrounds adjusted
+  - line colors brightened for path readability
+
+- Updated node class palettes in generated Mermaid text:
+  - file nodes: dark cyan style
+  - root nodes: dark green style
+
+Validation Performed (v0.2.7)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/visualizer.py main.py
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/toshi --output map.html --no-open --no-cache
+  - Result: map.html regenerated successfully with dark pro UI.
+
+-------------------------------------------------------------------------------
+v0.2.8 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Migrated graph renderer from Mermaid to vis-network for stronger interactivity.
+- Preserved dark pro visual language and added network-specific controls.
+
+Files Changed
+1) architect/visualizer.py
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/visualizer.py
+- Replaced Mermaid with vis-network UMD bundle.
+- Reworked graph container and rendering pipeline:
+  - vis DataSet nodes/edges
+  - directional arrows
+  - hover tooltips
+  - selection and focus support
+
+- Added network controls in sidebar:
+  - layout mode (Hierarchy LR, Hierarchy TD, Force Directed)
+  - show/hide edge labels
+  - physics on/off
+  - focus node search (enter to focus)
+  - fit/stabilize buttons
+
+- Added stable group-based node colors with deterministic palette selection.
+- Maintained dark pro design system with high-contrast graph canvas.
+
+Validation Performed (v0.2.8)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/visualizer.py main.py
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/toshi --output map.html --no-open --no-cache
+  - Result: map.html generated successfully.
+
+- Renderer verification:
+  - map.html includes vis-network script and no Mermaid usage in active renderer.
+
+-------------------------------------------------------------------------------
+v0.2.9 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Fixed viewport/window sizing so the graph canvas fills available space reliably.
+
+Files Changed
+1) architect/visualizer.py
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/visualizer.py
+- Updated layout sizing to use viewport-based heights:
+  - shell min-height
+  - graph-panel fixed viewport height
+  - network canvas set to full panel height
+
+- Improved responsive behavior:
+  - sidebar scroll handling on desktop
+  - mobile-specific graph height tuning
+
+- Added resize handling:
+  - on window resize, network redraw + fit for better framing
+
+Validation Performed (v0.2.9)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/visualizer.py main.py
+
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/toshi --output map.html --no-open --no-cache
+  - Result: map.html regenerated successfully.
+
+-------------------------------------------------------------------------------
+v0.2.10 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Reduced graph clutter by moving relationship text to a dedicated sidebar list.
+
+Files Changed
+1) architect/visualizer.py
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/visualizer.py
+- Relationship labels are now off by default on edges.
+- Added a `Relationships` section in sidebar with scrollable list items.
+- Each list item shows:
+  - source file -> target file
+  - detailed relationship label text
+- Added click interaction on list item:
+  - selects source/target nodes
+  - focuses target node in graph
+
+Validation Performed (v0.2.10)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/visualizer.py main.py
+- End-to-end run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/toshi --output map.html --no-open --no-cache
+  - Result: map.html regenerated successfully with decluttered graph labels.
+
+-------------------------------------------------------------------------------
+v0.2.11 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Improved large-repo runtime behavior for hybrid labeling.
+- Added auto-scaling LLM budget and lazy LLM engine initialization.
+- Documented fast-mode usage for very large repositories.
+
+Files Changed
+1) main.py
+2) README.md
+3) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) main.py
+- Added `resolve_llm_budget()` to auto-scale hybrid LLM edge budget by graph size when `--llm-max-edges` is not set.
+- Reduced default hybrid budget tiers for better speed on very large repos.
+- Updated `--llm-max-edges` behavior:
+  - now defaults to auto-scale (`None` internally)
+  - still supports explicit override.
+- Added lazy LLM engine initialization:
+  - skips creating `InferenceEngine` when label mode resolves to `hints`.
+- Added large-graph warning when using `--no-cache` with LLM labeling.
+- Updated runtime status message to print effective mode and effective LLM budget.
+
+2) README.md
+- Added large-repository usage examples:
+  - fast mode (`--label-mode hints`)
+  - balanced mode (`--label-mode hybrid`)
+- Added note that hybrid LLM budget is auto-scaled by default.
+- Added note that `--no-cache` can significantly increase runtime with LLM labeling.
+
+Validation Performed (v0.2.11)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile main.py architect/brain.py architect/visualizer.py
+- Unit tests:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m unittest discover -s tests -q
+  - Result: Ran 6 tests, all passed.
+- End-to-end large repo run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/tinygrad --output map.html --no-open --no-cache
+  - Result: completed successfully with auto-scaled hybrid budget.
+
+-------------------------------------------------------------------------------
+v0.2.12 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Improved large-graph usability in the HTML viewer with filtering and focused exploration controls.
+
+Files Changed
+1) architect/visualizer.py
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/visualizer.py
+- Added large-graph control panel features:
+  - Group filter dropdown (`All Groups` + per-group options)
+  - Visible edges range slider for render capping
+  - Focus mode toggle to view local neighborhood only
+  - Focus depth selector (1-3 hops)
+  - `Focus Search` and `Reset View` actions
+
+- Added graph filtering pipeline in client script:
+  - Applies group filter first
+  - Applies neighborhood BFS when focus mode is active
+  - Applies edge cap after filtering
+  - Recomputes visible node set from filtered edges
+
+- Added dynamic summary and list behavior:
+  - `Visible: N nodes, M edges` status line
+  - Relationship list now reflects only visible edges
+  - Relationship list caps rendered rows and displays guidance when truncated
+
+- Added click-to-focus feedback loop:
+  - Selecting a node updates current focus target
+  - In focus mode, node selection re-renders to neighborhood view
+
+Validation Performed (v0.2.12)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/visualizer.py main.py
+- End-to-end large repo run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/tinygrad --output map.html --no-open --label-mode hints
+  - Result: map.html regenerated successfully with large-graph exploration controls.
+
+-------------------------------------------------------------------------------
+v0.2.13 Update (Rolling Log)
+Date: 2026-03-06
+
+Overview
+- Implemented layered graph mode with top-level-first default view and expandable group nodes.
+
+Files Changed
+1) architect/visualizer.py
+2) CHANGES_V0_2.txt
+
+Detailed Changes
+
+1) architect/visualizer.py
+- Added layered-mode UI controls:
+  - `Layered mode (top-level first)` toggle (enabled by default)
+  - `Collapse All` and `Expand All` actions
+
+- Added layered graph model in browser script:
+  - top layer shows root files plus one node per non-root top-level group
+  - file-level nodes for a group appear when that group is expanded
+  - edges are aggregated when endpoint groups are collapsed (`N deps` style)
+
+- Added interactive expansion behavior:
+  - clicking a group node toggles expand/collapse for that group
+  - search focus auto-expands a non-root group containing the matched file
+
+- Kept compatibility with existing filters:
+  - group filter, focus mode, depth, and edge cap continue to apply
+  - visible summary and relationship list use currently rendered graph
+
+Validation Performed (v0.2.13)
+- Syntax checks:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python -m py_compile architect/visualizer.py main.py
+- End-to-end large repo run:
+  - /Users/kshitijmishra/architect-cli/venv/bin/python main.py --path /Users/kshitijmishra/tinygrad --output map.html --no-open --label-mode hints
+  - Result: map.html regenerated successfully with layered default view.
