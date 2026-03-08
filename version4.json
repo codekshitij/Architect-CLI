@@ -1,0 +1,59 @@
+{
+  "project_name": "Architect-CLI",
+  "target_architecture": "Full-Stack Dockerized Analysis Engine",
+  "version": "4.0-Pro",
+  "implementation_goals": {
+    "backend_modernization": {
+      "framework": "FastAPI",
+      "containerization": "Docker",
+      "objective": "Move from a CLI script to a high-performance API server that manages the tree-sitter scanning and LLM interactions in an isolated environment.",
+      "features": [
+        "Mount local codebase as a Docker volume for real-time scanning.",
+        "Asynchronous endpoints for deep symbol extraction (Classes/Functions).",
+        "Persistent caching of LLM relationship labels via volume-mapped JSON.",
+        "Internal routing for the 'Agentic Navigation' path discovery logic."
+      ]
+    },
+    "frontend_modernization": {
+      "framework": "React + Vite + Tailwind CSS",
+      "library": "React-Sigma (WebGL)",
+      "objective": "Replace static HTML with a stateful, interactive dashboard that allows for deep hierarchical exploration without 'hairball' clutter.",
+      "features": [
+        {
+          "name": "Isolated Container Views",
+          "description": "Clicking a folder clears the global view and renders only the internal files of that directory to maintain 100% readability."
+        },
+        {
+          "name": "On-Demand Connectivity",
+          "description": "Edges are hidden by default. Connections are only rendered when a user toggles 'Show Relationships' or selects a specific node."
+        },
+        {
+          "name": "Breadcrumb Navigation",
+          "description": "Dynamic 'Root > Folder > File' navigation bar to allow instant jumping between hierarchy levels."
+        },
+        {
+          "name": "GitLens-Style Heatmaps",
+          "description": "Nodes use a dynamic gradient (Cyan to Lava Red) based on code complexity and symbol density parsed by tree-sitter."
+        }
+      ]
+    },
+    "agentic_navigation_v2": {
+      "brain_integration": "Local Ollama / Qwen-2.5-Coder",
+      "objective": "Transform the map into a conversational architect that explains code flows.",
+      "features": [
+        "Trace Path Explanation: Highlight a dependency chain and receive a 2-4 sentence summary of the architectural intent.",
+        "Risk Analysis: AI-flagged alerts for circular dependencies or leaky abstractions during a trace.",
+        "Search-to-Zoom: Natural language search that auto-navigates the UI to the relevant code cluster."
+      ]
+    }
+  },
+  "deployment_strategy": {
+    "docker_compose": {
+      "services": {
+        "backend": "Python 3.10 image with tree-sitter-language-pack and FastAPI.",
+        "frontend": "Node.js image serving the React/Vite dashboard.",
+        "ollama": "Localhost connection to existing Ollama service for LLM inference."
+      }
+    }
+  }
+}

@@ -4,3 +4,4 @@ __pycache__/
 *.pyo
 *.pyd
 .architect_cache.json
+.architect_analysis_store.json

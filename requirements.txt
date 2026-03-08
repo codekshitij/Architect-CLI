@@ -1,5 +1,5 @@
 requests
 tree-sitter
 tree-sitter-language-pack
-jinja2
-Flask
+fastapi
+uvicorn
