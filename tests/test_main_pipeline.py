@@ -128,6 +128,44 @@ class MainPipelineTests(unittest.TestCase):
         self.assertEqual(labeled, [(source, target, "imports b")])
         self.assertEqual(brain.calls, 0)
 
+    def test_build_hierarchical_graph_aggregates_folder_edges(self):
+        labeled_edges = [
+            ("/repo/src/a.py", "/repo/lib/b.py", "imports b"),
+            ("/repo/src/c.py", "/repo/lib/d.py", "imports d"),
+            ("/repo/src/a.py", "/repo/lib/d.py", "uses d"),
+        ]
+        symbol_index = {
+            "/repo/src/a.py": {"classes": ["AClass"], "functions": ["run"]},
+            "/repo/lib/b.py": {"classes": [], "functions": ["helper"]},
+            "/repo/src/c.py": {"classes": [], "functions": []},
+            "/repo/lib/d.py": {"classes": [], "functions": []},
+        }
+
+        graph = main.build_hierarchical_graph(labeled_edges, symbol_index)
+
+        self.assertIn("system", graph)
+        self.assertEqual(len(graph["system"]["children"]), 2)
+
+        agg = graph["aggregate_edges"]
+        src_to_lib = [e for e in agg if e["source"] == "src" and e["target"] == "lib"]
+        self.assertEqual(len(src_to_lib), 1)
+        self.assertEqual(src_to_lib[0]["weight"], 3)
+
+    def test_find_path_returns_shortest_path(self):
+        edges = [
+            ("a.py", "b.py", "imports b"),
+            ("b.py", "d.py", "calls d"),
+            ("a.py", "c.py", "imports c"),
+            ("c.py", "d.py", "uses d"),
+        ]
+
+        nodes, labels = main._find_path("a.py", "d.py", edges)
+
+        self.assertEqual(nodes[0], "a.py")
+        self.assertEqual(nodes[-1], "d.py")
+        self.assertEqual(len(nodes), 3)
+        self.assertEqual(len(labels), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

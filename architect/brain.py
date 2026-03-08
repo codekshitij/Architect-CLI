@@ -114,3 +114,43 @@ class InferenceEngine:
                 time.sleep(self.retry_backoff_seconds * (attempt + 1))
 
         return self._fallback_from_hint(file_a, file_b, hint)
+
+    def get_path_explanation(self, path_nodes, path_labels, file_cache):
+        if len(path_nodes) < 2:
+            return "Path explanation unavailable for an empty dependency chain."
+
+        chain = " -> ".join(os.path.basename(node) for node in path_nodes)
+        label_summary = " | ".join(path_labels[:8]) if path_labels else "dependency chain"
+
+        snippets = []
+        for node_path in path_nodes[:4]:
+            snippet = file_cache.get(node_path, "")[:300]
+            if snippet:
+                snippets.append(f"{os.path.basename(node_path)}: {snippet}")
+
+        prompt = (
+            "You are explaining software architecture intent for a dependency flow.\n"
+            f"Path: {chain}\n"
+            f"Observed edge intent: {label_summary}\n"
+            f"Relevant snippets:\n{chr(10).join(snippets) if snippets else 'n/a'}\n\n"
+            "Return one concise paragraph (2-4 sentences) that explains why this flow likely exists, "
+            "what responsibility is transferred between modules, and one potential risk to watch."
+        )
+
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 180},
+        }
+
+        try:
+            response = requests.post(self.url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            text = str(response.json().get("response", "")).strip()
+            if text:
+                return text.split("```", 1)[0].strip()
+        except (RequestException, ValueError):
+            pass
+
+        return f"The flow {chain} indicates staged responsibility handoff; labels suggest: {label_summary}."

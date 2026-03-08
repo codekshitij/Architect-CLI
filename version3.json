@@ -1,0 +1,66 @@
+{
+  "project_name": "Architect-CLI",
+  "version_goal": "Final - Interactive Analysis Engine",
+  "implementation_plan": {
+    "phase_1": {
+      "title": "Hierarchical Data & C4 Abstraction",
+      "objective": "Move from a flat file-to-file map to a nested 'System -> Container -> Component' model to eliminate graph noise.",
+      "tasks": [
+        {
+          "file": "main.py",
+          "action": "Modify 'resolve_edges' to calculate weights between top-level directories (Folders). If Multiple files in Folder A import files in Folder B, create a single 'Aggregate Edge' with a weight attribute."
+        },
+        {
+          "file": "architect/scanner.py",
+          "action": "Enhance 'UniversalScanner' to extract class and function definitions using Tree-Sitter queries for Python and C++."
+        },
+        {
+          "file": "architect/visualizer.py",
+          "action": "Update 'generate_html' to pass a nested JSON structure where nodes contain 'children' (files inside folders, functions inside files)."
+        }
+      ]
+    },
+    "phase_2": {
+      "title": "WebGL Rendering & Semantic Zoom",
+      "objective": "Replace Canvas rendering with WebGL to support 10,000+ nodes and implement Level-of-Detail (LOD) visibility.",
+      "tasks": [
+        {
+          "file": "architect/visualizer.py",
+          "action": "Swap the 'vis-network' library in 'HTML_TEMPLATE' for 'Sigma.js' or 'Cosmograph' to utilize GPU acceleration."
+        },
+        {
+          "file": "architect/visualizer.py",
+          "action": "Implement a 'Semantic Zoom' listener in JavaScript: hide file/function labels when zoomed out; reveal internal components only when a folder node is double-clicked or zoomed in."
+        },
+        {
+          "file": "architect/visualizer.py",
+          "action": "Apply 'Force-Atlas2' layout algorithms for better clustering of related modules."
+        }
+      ]
+    },
+    "phase_3": {
+      "title": "Agentic Navigation & Path Discovery",
+      "objective": "Transform the static HTML into a dynamic analysis tool where the LLM acts as a guide.",
+      "tasks": [
+        {
+          "file": "architect/brain.py",
+          "action": "Add a new method 'get_path_explanation' that takes two nodes and their intermediary code to describe the 'Architectural Intent' of that specific flow."
+        },
+        {
+          "file": "main.py",
+          "action": "Introduce a 'Live Mode' using a lightweight Flask/FastAPI backend so the browser can request fresh LLM analysis without re-running a full scan."
+        },
+        {
+          "file": "architect/visualizer.py",
+          "action": "Add a 'Trace Path' UI component: users select two nodes, and the system highlights the dependency chain while dimming the rest of the 'hairball'."
+        }
+      ]
+    }
+  },
+  "technical_constraints": {
+    "python_version": "3.10+",
+    "rendering_engine": "WebGL (Sigma.js)",
+    "llm_integration": "Local Ollama (qwen2.5-coder:7b)",
+    "data_format": "JSON-based hierarchical graph."
+  }
+}

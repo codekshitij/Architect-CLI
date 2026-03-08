@@ -4,6 +4,7 @@ import json
 import os
 import re
 import webbrowser
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from architect.brain import InferenceEngine
@@ -220,31 +221,221 @@ def save_cache(cache_file, cache_data):
 
 
 def _scan_file(scanner, full_path):
-    code, deps = scanner.scan(full_path)
-    return full_path, code, deps
+    code, deps, symbols = scanner.scan(full_path)
+    return full_path, code, deps, symbols
 
 
 def scan_files(scanner, all_paths, workers):
     raw_deps = {}
     file_cache = {}
+    symbol_index = {}
 
     if workers == 1:
         for full_path in all_paths:
-            _, code, deps = _scan_file(scanner, full_path)
+            _, code, deps, symbols = _scan_file(scanner, full_path)
             if code:
                 file_cache[full_path] = code
                 raw_deps[full_path] = deps
-        return file_cache, raw_deps
+                symbol_index[full_path] = symbols
+        return file_cache, raw_deps, symbol_index
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(_scan_file, scanner, full_path) for full_path in all_paths]
         for future in as_completed(futures):
-            full_path, code, deps = future.result()
+            full_path, code, deps, symbols = future.result()
             if code:
                 file_cache[full_path] = code
                 raw_deps[full_path] = deps
+                symbol_index[full_path] = symbols
 
-    return file_cache, raw_deps
+    return file_cache, raw_deps, symbol_index
+
+
+def _top_level_group(path, common_root):
+    if not common_root:
+        return "root"
+    rel = os.path.relpath(path, common_root)
+    parts = rel.split(os.sep)
+    if len(parts) <= 1:
+        return "root"
+    return parts[0]
+
+
+def _stable_id(prefix, raw_value):
+    digest = hashlib.md5(raw_value.encode("utf-8")).hexdigest()[:10]
+    safe = re.sub(r"[^a-zA-Z0-9]", "_", raw_value)[:36]
+    return f"{prefix}_{safe}_{digest}"
+
+
+def build_hierarchical_graph(labeled_edges, symbol_index):
+    file_paths = sorted({s for s, _, _ in labeled_edges} | {t for _, t, _ in labeled_edges})
+    common_root = os.path.commonpath(file_paths) if file_paths else ""
+
+    containers = {}
+    aggregate = {}
+    file_edges = []
+
+    for path in file_paths:
+        group = _top_level_group(path, common_root)
+        rel_path = os.path.relpath(path, common_root) if common_root else os.path.basename(path)
+        file_node = {
+            "id": _stable_id("file", path),
+            "label": os.path.basename(path),
+            "path": rel_path,
+            "full_path": path,
+            "type": "file",
+            "children": [],
+        }
+
+        symbols = symbol_index.get(path, {"classes": [], "functions": []})
+        for class_name in symbols.get("classes", []):
+            file_node["children"].append(
+                {
+                    "id": _stable_id("class", f"{path}:{class_name}"),
+                    "label": class_name,
+                    "type": "class",
+                }
+            )
+        for fn_name in symbols.get("functions", []):
+            file_node["children"].append(
+                {
+                    "id": _stable_id("func", f"{path}:{fn_name}"),
+                    "label": fn_name,
+                    "type": "function",
+                }
+            )
+
+        if group not in containers:
+            containers[group] = {
+                "id": _stable_id("container", group),
+                "label": group,
+                "type": "container",
+                "children": [],
+            }
+        containers[group]["children"].append(file_node)
+
+    for source_path, target_path, label in labeled_edges:
+        src_group = _top_level_group(source_path, common_root)
+        dst_group = _top_level_group(target_path, common_root)
+
+        agg_key = (src_group, dst_group)
+        entry = aggregate.setdefault(
+            agg_key,
+            {
+                "id": _stable_id("agg", f"{src_group}->{dst_group}"),
+                "source": src_group,
+                "target": dst_group,
+                "weight": 0,
+                "labels": defaultdict(int),
+            },
+        )
+        entry["weight"] += 1
+        entry["labels"][label] += 1
+
+        file_edges.append(
+            {
+                "id": _stable_id("edge", f"{source_path}->{target_path}"),
+                "source": source_path,
+                "target": target_path,
+                "label": label,
+                "source_group": src_group,
+                "target_group": dst_group,
+            }
+        )
+
+    aggregate_edges = []
+    for value in aggregate.values():
+        top_labels = sorted(value["labels"].items(), key=lambda item: item[1], reverse=True)
+        aggregate_edges.append(
+            {
+                "id": value["id"],
+                "source": value["source"],
+                "target": value["target"],
+                "weight": value["weight"],
+                "top_label": top_labels[0][0] if top_labels else "dependency",
+            }
+        )
+
+    return {
+        "system": {
+            "id": "system",
+            "label": "Architect System",
+            "type": "system",
+            "children": [containers[name] for name in sorted(containers.keys())],
+        },
+        "aggregate_edges": sorted(
+            aggregate_edges,
+            key=lambda item: (item["source"], item["target"]),
+        ),
+        "file_edges": file_edges,
+    }
+
+
+def _find_path(source_path, target_path, edges):
+    adjacency = defaultdict(list)
+    for edge in edges:
+        adjacency[edge[0]].append((edge[1], edge[2]))
+
+    queue = deque([(source_path, [source_path], [])])
+    visited = {source_path}
+    while queue:
+        node, path_nodes, path_labels = queue.popleft()
+        if node == target_path:
+            return path_nodes, path_labels
+        for neighbor, label in adjacency.get(node, []):
+            if neighbor in visited:
+                continue
+            visited.add(neighbor)
+            queue.append((neighbor, path_nodes + [neighbor], path_labels + [label]))
+    return [], []
+
+
+def run_live_mode(output_path, file_edges, file_cache, brain, host, port):
+    try:
+        from flask import Flask, jsonify, request, send_file
+    except ImportError as exc:
+        raise RuntimeError(
+            "Live mode requires Flask. Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    app = Flask(__name__)
+
+    @app.get("/")
+    def home():
+        return send_file(output_path)
+
+    @app.get("/api/health")
+    def health():
+        return jsonify({"status": "ok", "edge_count": len(file_edges)})
+
+    @app.post("/api/path-explanation")
+    def path_explanation():
+        payload = request.get_json(silent=True) or {}
+        source_path = payload.get("source")
+        target_path = payload.get("target")
+        if not source_path or not target_path:
+            return jsonify({"error": "source and target are required"}), 400
+
+        path_nodes, path_labels = _find_path(source_path, target_path, file_edges)
+        if not path_nodes:
+            return jsonify({"error": "no dependency path found"}), 404
+
+        if brain:
+            explanation = brain.get_path_explanation(path_nodes, path_labels, file_cache)
+        else:
+            explanation = " -> ".join(path_labels) if path_labels else "direct dependency"
+
+        return jsonify(
+            {
+                "source": source_path,
+                "target": target_path,
+                "path": path_nodes,
+                "labels": path_labels,
+                "explanation": explanation,
+            }
+        )
+
+    app.run(host=host, port=port, debug=False)
 
 
 def _choose_llm_edges(edges, edge_hints, llm_max_edges):
@@ -437,6 +628,13 @@ def build_parser():
         default=8,
         help="Cap stem-based dependency matches per token to reduce noisy edge explosion (0 disables cap)",
     )
+    parser.add_argument(
+        "--live-mode",
+        action="store_true",
+        help="Serve the generated map with API endpoints for interactive path explanations",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Live mode host")
+    parser.add_argument("--port", type=int, default=8765, help="Live mode port")
     parser.set_defaults(open_browser=True)
     return parser
 
@@ -458,6 +656,8 @@ def main():
         parser.error("--llm-max-edges must be 0 or a positive integer")
     if args.max_targets_per_dep < 0:
         parser.error("--max-targets-per-dep must be 0 or a positive integer")
+    if args.port <= 0:
+        parser.error("--port must be a positive integer")
 
     scanner = UniversalScanner()
     workers = resolve_workers(args.workers)
@@ -472,7 +672,7 @@ def main():
     all_paths = discover_files(project_path)
     by_filename, by_stem = build_indexes(all_paths)
 
-    file_cache, raw_deps = scan_files(scanner, all_paths, workers)
+    file_cache, raw_deps, symbol_index = scan_files(scanner, all_paths, workers)
 
     edges, edge_hints = resolve_edges(
         raw_deps,
@@ -519,7 +719,8 @@ def main():
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
-    generate_html(final_edges, output_path)
+    hierarchical_graph = build_hierarchical_graph(final_edges, symbol_index)
+    generate_html(final_edges, output_path, hierarchical_graph=hierarchical_graph)
     print(f"Done. Map generated at: {output_path}")
 
     if use_cache:
@@ -527,6 +728,10 @@ def main():
 
     if args.open_browser:
         webbrowser.open("file://" + output_path)
+
+    if args.live_mode:
+        print(f"Starting live mode server at http://{args.host}:{args.port}")
+        run_live_mode(output_path, final_edges, file_cache, brain, args.host, args.port)
 
 
 if __name__ == "__main__":
