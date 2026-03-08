@@ -18,18 +18,24 @@ HTML_TEMPLATE = """
   <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
   <style>
     :root {
-      --bg: #05070a;
-      --panel: rgba(10, 15, 25, 0.75);
-      --accent: #00f2ff;
-      --accent-glow: rgba(0, 242, 255, 0.3);
-      --border: rgba(255, 255, 255, 0.1);
-      --text: #e2e8f0;
-      --text-muted: #64748b;
+      --bg-0: #0d1117;
+      --bg-1: #111827;
+      --bg-2: #161f2b;
+      --panel: rgba(17, 24, 39, 0.84);
+      --accent: #2f81f7;
+      --accent-hover: #1f6feb;
+      --focus-ring: rgba(47, 129, 247, 0.35);
+      --border: #253041;
+      --text: #e6edf3;
+      --text-muted: #9fb0c3;
+      --edge: rgba(143, 163, 186, 0.28);
+      --edge-dim: rgba(143, 163, 186, 0.12);
+      --edge-active: rgba(47, 129, 247, 0.95);
     }
 
     body {
       margin: 0; padding: 0;
-      background: var(--bg);
+      background: linear-gradient(160deg, var(--bg-0), var(--bg-1));
       color: var(--text);
       font-family: 'Plus Jakarta Sans', sans-serif;
       overflow: hidden;
@@ -41,8 +47,8 @@ HTML_TEMPLATE = """
     .bg-effects {
       position: absolute; inset: 0; z-index: -1;
       background: 
-        radial-gradient(circle at 20% 30%, rgba(0, 242, 255, 0.05), transparent 40%),
-        radial-gradient(circle at 80% 70%, rgba(123, 31, 162, 0.08), transparent 40%);
+        radial-gradient(circle at 20% 30%, rgba(47, 129, 247, 0.08), transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(159, 176, 195, 0.06), transparent 40%);
     }
 
     .dashboard {
@@ -54,19 +60,18 @@ HTML_TEMPLATE = """
     .sidebar {
       width: 320px;
       background: var(--panel);
-      backdrop-filter: blur(20px);
+      backdrop-filter: blur(14px);
       border: 1px solid var(--border);
       border-radius: 24px;
       padding: 24px;
       display: flex; flex-direction: column;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 20px 42px rgba(2, 6, 12, 0.45);
     }
 
     h1 {
       font-size: 1.2rem; font-weight: 800; margin: 0;
       letter-spacing: -0.02em; text-transform: uppercase;
-      background: linear-gradient(to right, #00f2ff, #7b1fa2);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      color: var(--text);
     }
 
     .stats {
@@ -79,10 +84,10 @@ HTML_TEMPLATE = """
       font-size: 0.75rem; color: var(--text-muted);
     }
 
-    .stat-card b { display: block; font-size: 1rem; color: var(--accent); }
+    .stat-card b { display: block; font-size: 1rem; color: #76a9fa; }
 
     .btn {
-      background: rgba(255,255,255,0.05);
+      background: rgba(255,255,255,0.03);
       border: 1px solid var(--border);
       color: var(--text);
       padding: 10px; border-radius: 8px;
@@ -91,22 +96,28 @@ HTML_TEMPLATE = """
       margin-bottom: 8px;
     }
 
-    .btn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+    .btn:hover { background: rgba(47, 129, 247, 0.16); border-color: var(--accent); }
 
-    .btn-primary { background: var(--accent); color: #000; border-color: var(--accent); }
+    .btn-primary { background: var(--accent); color: #f8fbff; border-color: var(--accent); }
+    .btn-primary:hover { background: var(--accent-hover); }
+
+    .btn:focus-visible,
+    select:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px var(--focus-ring);
+    }
 
     /* Graph Canvas */
     .viewport {
       flex: 1; position: relative;
-      background: rgba(255, 255, 255, 0.01);
+      background: linear-gradient(160deg, var(--bg-1), var(--bg-2));
       border-radius: 24px; border: 1px solid var(--border);
       overflow: hidden;
     }
 
     #sigma-container { width: 100%; height: 100%; }
 
-    /* Custom Labels */
-    .node-label { background: rgba(0,0,0,0.8); border: 1px solid var(--accent); padding: 4px 8px; border-radius: 4px; }
+    .node-label { background: rgba(13, 17, 23, 0.92); border: 1px solid var(--border); padding: 4px 8px; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -153,7 +164,7 @@ HTML_TEMPLATE = """
     const aggregateEdges = graphData.aggregate_edges || [];
     const fileEdges = graphData.file_edges || [];
 
-    const colors = ["#00f2ff", "#7000ff", "#ff0070", "#00ff70", "#ffff00", "#ff7000"];
+    const colors = ["#2f81f7", "#1f6feb", "#316dca", "#3b82f6", "#4f78c4", "#2f5fa5"];
     const getFolderColor = (name) => {
       let hash = 0;
       for (let i = 0; i < name.length; i += 1) hash = name.charCodeAt(i) + ((hash << 5) - hash);
@@ -227,7 +238,7 @@ HTML_TEMPLATE = """
         addEdge(g, src.id, dst.id, {
           kind: "aggregate",
           size: Math.max(1.5, Math.min(7, edge.weight / 2)),
-          color: "rgba(255,255,255,0.2)",
+          color: "rgba(143, 163, 186, 0.28)",
           label: `${edge.weight} deps`,
         }, "agg");
       }
@@ -256,7 +267,7 @@ HTML_TEMPLATE = """
           label: file.label,
           kind: "file",
           size: 7,
-          color: "#ffffff",
+          color: "#dbe7f5",
           x: Math.cos(angle) * 170,
           y: Math.sin(angle) * 170,
           fullPath: file.full_path,
@@ -264,7 +275,7 @@ HTML_TEMPLATE = """
         addEdge(g, container.id, file.id, {
           kind: "membership",
           size: 0.7,
-          color: "rgba(0, 242, 255, 0.25)",
+          color: "rgba(143, 163, 186, 0.18)",
         }, "member");
         idx += 1;
       }
@@ -277,7 +288,7 @@ HTML_TEMPLATE = """
         addEdge(g, edge.sourceId, edge.targetId, {
           kind: "file-relation",
           size: 1.6,
-          color: "rgba(255, 255, 255, 0.35)",
+          color: "rgba(143, 163, 186, 0.36)",
           label: edge.label,
         }, "intra");
       }
@@ -293,7 +304,7 @@ HTML_TEMPLATE = """
         label: file.label,
         kind: "file",
         size: 13,
-        color: "#00f2ff",
+        color: "#2f81f7",
         x: 0,
         y: 0,
       });
@@ -309,14 +320,14 @@ HTML_TEMPLATE = """
           label: symbol.label,
           kind: symbol.type || "symbol",
           size: 5,
-          color: "#f8fafc",
+          color: "#dbe7f5",
           x: Math.cos(angle) * 95,
           y: Math.sin(angle) * 95,
         });
         addEdge(g, file.id, symbolId, {
           kind: "symbol",
           size: 0.8,
-          color: "rgba(0, 242, 255, 0.3)",
+          color: "rgba(143, 163, 186, 0.24)",
         }, "symbol");
         idx += 1;
       }
@@ -336,7 +347,7 @@ HTML_TEMPLATE = """
           label: neighbor.label,
           kind: "neighbor",
           size: 7,
-          color: "#a3e635",
+          color: "#8ec5ff",
           x: Math.cos(angle) * 190,
           y: Math.sin(angle) * 190,
         });
@@ -349,7 +360,7 @@ HTML_TEMPLATE = """
         addEdge(g, edge.sourceId, edge.targetId, {
           kind: "relation-focus",
           size: 2.2,
-          color: "rgba(255,255,255,0.55)",
+          color: "rgba(143, 163, 186, 0.52)",
           label: edge.label,
         }, "focus");
       }
@@ -425,7 +436,7 @@ HTML_TEMPLATE = """
         renderLabels: true,
         defaultEdgeType: "arrow",
         labelFont: "Plus Jakarta Sans",
-        labelColor: { color: "#ffffff" },
+        labelColor: { color: "#e6edf3" },
         labelSize: 12,
         nodeReducer: (_id, attrs) => {
           const reduced = { ...attrs };
@@ -492,11 +503,11 @@ HTML_TEMPLATE = """
       renderer.setSetting("edgeReducer", (id, attrs) => {
         const reduced = { ...attrs };
         if (edgesInPath.has(id)) {
-          reduced.color = "#00f2ff";
+          reduced.color = "rgba(47, 129, 247, 0.95)";
           reduced.size = Math.max(2.8, attrs.size || 2);
           reduced.label = edgeWeightLabel(attrs);
         } else {
-          reduced.color = "rgba(255,255,255,0.08)";
+          reduced.color = "rgba(143, 163, 186, 0.12)";
         }
         return reduced;
       });
