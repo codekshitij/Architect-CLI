@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import {
   SigmaContainer,
   useLoadGraph,
   useRegisterEvents,
+  useSetSettings,
   useSigma,
 } from '@react-sigma/core'
 import '@react-sigma/core/lib/style.css'
@@ -94,6 +95,99 @@ function asCircle(index: number, total: number, radius: number) {
   return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function interpolateColor(start: [number, number, number], end: [number, number, number], t: number) {
+  const ratio = clamp(t, 0, 1)
+  const r = Math.round(start[0] + (end[0] - start[0]) * ratio)
+  const g = Math.round(start[1] + (end[1] - start[1]) * ratio)
+  const b = Math.round(start[2] + (end[2] - start[2]) * ratio)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function complexityToColor(score: number) {
+  // 0.0 -> cyan, 0.6 -> orange, 1.0 -> red
+  const t = clamp(score, 0, 1)
+  if (t <= 0.6) {
+    return interpolateColor([70, 220, 255], [255, 177, 88], t / 0.6)
+  }
+  return interpolateColor([255, 177, 88], [255, 84, 84], (t - 0.6) / 0.4)
+}
+
+function buildComplexityIndex(hierarchy: Hierarchy) {
+  const symbolsPerPath = new Map<string, number>()
+  const degreePerPath = new Map<string, number>()
+
+  hierarchy.system.children.forEach((container) => {
+    container.children.forEach((file) => {
+      symbolsPerPath.set(file.full_path, file.children.length)
+      degreePerPath.set(file.full_path, 0)
+    })
+  })
+
+  hierarchy.file_edges.forEach((edge) => {
+    degreePerPath.set(edge.source, (degreePerPath.get(edge.source) || 0) + 1)
+    degreePerPath.set(edge.target, (degreePerPath.get(edge.target) || 0) + 1)
+  })
+
+  const fileScore = new Map<string, number>()
+  Array.from(symbolsPerPath.keys()).forEach((path) => {
+    const symbolScore = clamp((symbolsPerPath.get(path) || 0) / 24, 0, 1)
+    const degreeScore = clamp((degreePerPath.get(path) || 0) / 20, 0, 1)
+    const combined = clamp(symbolScore * 0.55 + degreeScore * 0.45, 0, 1)
+    fileScore.set(path, combined)
+  })
+
+  return fileScore
+}
+
+function drawDarkNodeHover(context: CanvasRenderingContext2D, data: any, settings: any) {
+  const size = settings.labelSize
+  const font = settings.labelFont
+  const weight = settings.labelWeight
+  context.font = `${weight} ${size}px ${font}`
+
+  const padding = 3
+  const radius = Math.max(data.size, size / 2) + padding
+  const text = typeof data.label === 'string' ? data.label : ''
+
+  context.fillStyle = 'rgba(6, 17, 30, 0.94)'
+  context.shadowOffsetX = 0
+  context.shadowOffsetY = 0
+  context.shadowBlur = 10
+  context.shadowColor = 'rgba(33, 184, 255, 0.45)'
+
+  if (text) {
+    const textWidth = context.measureText(text).width
+    const boxWidth = Math.round(textWidth + 8)
+    const boxHeight = Math.round(size + 2 * padding)
+    const angleRadian = Math.asin(boxHeight / 2 / radius)
+    const xDeltaCoord = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2))
+
+    context.beginPath()
+    context.moveTo(data.x + xDeltaCoord, data.y + boxHeight / 2)
+    context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2)
+    context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2)
+    context.lineTo(data.x + xDeltaCoord, data.y - boxHeight / 2)
+    context.arc(data.x, data.y, radius, angleRadian, -angleRadian)
+    context.closePath()
+    context.fill()
+  } else {
+    context.beginPath()
+    context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2)
+    context.closePath()
+    context.fill()
+  }
+
+  context.shadowBlur = 0
+  context.fillStyle = '#f2fbff'
+  if (text) {
+    context.fillText(text, data.x + data.size + 4, data.y + size / 3)
+  }
+}
+
 function buildGraph(
   hierarchy: Hierarchy,
   view: ViewState,
@@ -104,6 +198,7 @@ function buildGraph(
   const containers = hierarchy.system.children
   const byName = new Map(containers.map((c) => [c.label, c]))
   const fileByPath = new Map<string, (FileNode & { containerId: string })>()
+  const complexityByPath = buildComplexityIndex(hierarchy)
 
   for (const c of containers) {
     for (const f of c.children) {
@@ -119,10 +214,17 @@ function buildGraph(
   if (view.level === 'containers') {
     containers.forEach((container, i) => {
       const pos = asCircle(i, containers.length, 14)
+      const children = container.children
+      const avgComplexity =
+        children.length > 0
+          ? children.reduce((acc, child) => acc + (complexityByPath.get(child.full_path) || 0), 0) / children.length
+          : 0
       graph.addNode(container.id, {
         label: container.label,
         kind: 'container',
-        color: '#2f81f7',
+        complexityScore: avgComplexity,
+        heatColor: complexityToColor(avgComplexity),
+        color: complexityToColor(avgComplexity),
         size: 14,
         x: pos.x,
         y: pos.y,
@@ -148,7 +250,9 @@ function buildGraph(
     graph.addNode(container.id, {
       label: `${container.label}/`,
       kind: 'container',
-      color: '#2f81f7',
+      complexityScore: 0,
+      heatColor: '#5fb8ff',
+      color: '#5fb8ff',
       size: 16,
       x: 0,
       y: 0,
@@ -170,7 +274,17 @@ function buildGraph(
             label: `${groupLabel}/ (${files.length})`,
             kind: 'group',
             groupLabel,
-            color: '#90e0ef',
+            complexityScore:
+              files.reduce((acc, file) => acc + (complexityByPath.get(file.full_path) || 0), 0) /
+              Math.max(files.length, 1),
+            heatColor: complexityToColor(
+              files.reduce((acc, file) => acc + (complexityByPath.get(file.full_path) || 0), 0) /
+                Math.max(files.length, 1),
+            ),
+            color: complexityToColor(
+              files.reduce((acc, file) => acc + (complexityByPath.get(file.full_path) || 0), 0) /
+                Math.max(files.length, 1),
+            ),
             size: 10,
             x: pos.x,
             y: pos.y,
@@ -190,7 +304,9 @@ function buildGraph(
         graph.addNode(file.id, {
           label: file.label,
           kind: 'file',
-          color: '#dbe7f5',
+          complexityScore: complexityByPath.get(file.full_path) || 0,
+          heatColor: complexityToColor(complexityByPath.get(file.full_path) || 0),
+          color: complexityToColor(complexityByPath.get(file.full_path) || 0),
           size: 7,
           x: pos.x,
           y: pos.y,
@@ -242,7 +358,9 @@ function buildGraph(
         graph.addNode(file.id, {
           label: file.label,
           kind: 'file',
-          color: '#dbe7f5',
+          complexityScore: complexityByPath.get(file.full_path) || 0,
+          heatColor: complexityToColor(complexityByPath.get(file.full_path) || 0),
+          color: complexityToColor(complexityByPath.get(file.full_path) || 0),
           size: 7,
           x: pos.x,
           y: pos.y,
@@ -279,7 +397,9 @@ function buildGraph(
     graph.addNode(container.id, {
       label: `${container.label}/`,
       kind: 'container',
-      color: '#2f81f7',
+      complexityScore: 0,
+      heatColor: '#5fb8ff',
+      color: '#5fb8ff',
       size: 16,
       x: 0,
       y: 0,
@@ -290,7 +410,9 @@ function buildGraph(
       graph.addNode(file.id, {
         label: file.label,
         kind: 'file',
-        color: '#dbe7f5',
+        complexityScore: complexityByPath.get(file.full_path) || 0,
+        heatColor: complexityToColor(complexityByPath.get(file.full_path) || 0),
+        color: complexityToColor(complexityByPath.get(file.full_path) || 0),
         size: 7,
         x: pos.x,
         y: pos.y,
@@ -317,7 +439,9 @@ function buildGraph(
         graph.addNode(other.id, {
           label: other.label,
           kind: 'neighbor',
-          color: '#8ec5ff',
+          complexityScore: complexityByPath.get(other.full_path) || 0,
+          heatColor: complexityToColor(complexityByPath.get(other.full_path) || 0),
+          color: complexityToColor(complexityByPath.get(other.full_path) || 0),
           size: 6.5,
           x: pos.x,
           y: pos.y,
@@ -359,7 +483,9 @@ function buildGraph(
     graph.addNode(file.id, {
       label: file.label,
       kind: 'file',
-      color: '#2f81f7',
+      complexityScore: complexityByPath.get(file.full_path) || 0,
+      heatColor: complexityToColor(complexityByPath.get(file.full_path) || 0),
+      color: complexityToColor(complexityByPath.get(file.full_path) || 0),
       size: 14,
       x: 0,
       y: 0,
@@ -371,7 +497,9 @@ function buildGraph(
       graph.addNode(sid, {
         label: symbol.label,
         kind: 'symbol',
-        color: '#dbe7f5',
+        complexityScore: clamp((complexityByPath.get(file.full_path) || 0) * 0.7, 0, 1),
+        heatColor: complexityToColor(clamp((complexityByPath.get(file.full_path) || 0) * 0.7, 0, 1)),
+        color: complexityToColor(clamp((complexityByPath.get(file.full_path) || 0) * 0.7, 0, 1)),
         size: 4,
         x: pos.x,
         y: pos.y,
@@ -397,7 +525,9 @@ function buildGraph(
         graph.addNode(other.id, {
           label: other.label,
           kind: 'neighbor',
-          color: '#8ec5ff',
+          complexityScore: complexityByPath.get(other.full_path) || 0,
+          heatColor: complexityToColor(complexityByPath.get(other.full_path) || 0),
+          color: complexityToColor(complexityByPath.get(other.full_path) || 0),
           size: 7,
           x: pos.x,
           y: pos.y,
@@ -420,27 +550,176 @@ function buildGraph(
 function GraphController({
   graph,
   onDrill,
+  showConnections,
+  selectedNode,
+  hoveredNode,
+  onSelectNode,
+  onClearSelection,
+  onHoverNode,
 }: {
   graph: MultiDirectedGraph
   onDrill: (node: string, kind: string) => void
+  showConnections: boolean
+  selectedNode: string | null
+  hoveredNode: string | null
+  onSelectNode: (node: string) => void
+  onClearSelection: () => void
+  onHoverNode: (node: string | null) => void
 }) {
   const loadGraph = useLoadGraph()
   const sigma = useSigma()
   const registerEvents = useRegisterEvents()
+  const setSettings = useSetSettings()
+  const focusNode = selectedNode || hoveredNode
 
-  useMemo(() => {
+  const focusState = useMemo(() => {
+    const focusEdges = new Set<string>()
+    const focusNeighbors = new Set<string>()
+    if (!focusNode || !graph.hasNode(focusNode)) {
+      return { focusEdges, focusNeighbors }
+    }
+
+    const edges = [...graph.inEdges(focusNode), ...graph.outEdges(focusNode)]
+    edges.forEach((edge) => {
+      focusEdges.add(edge)
+      const [src, dst] = graph.extremities(edge)
+      focusNeighbors.add(src)
+      focusNeighbors.add(dst)
+    })
+
+    return { focusEdges, focusNeighbors }
+  }, [focusNode, graph])
+
+  useEffect(() => {
     loadGraph(graph)
     sigma.getCamera().animatedReset({ duration: 350 })
   }, [graph, loadGraph, sigma])
 
-  useMemo(() => {
+  useEffect(() => {
+    setSettings({
+      defaultEdgeType: 'arrow',
+      defaultDrawNodeHover: drawDarkNodeHover,
+      labelSize: 15,
+      labelRenderedSizeThreshold: 6,
+      nodeReducer: (node, data) => {
+        const baseColor = String(data.heatColor || data.color || '#76d5ff')
+        const ratio = sigma.getCamera().getState().ratio
+        const kind = String(data.kind || '')
+        const isContainerLike = kind === 'container' || kind === 'group'
+        const isZoomedOut = ratio > 3.2
+        const semanticLabel = isZoomedOut && !isContainerLike ? '' : String(data.label || '')
+
+        if (!focusNode) {
+          return {
+            ...data,
+            color: baseColor,
+            label: semanticLabel,
+            labelColor: '#eaf7ff',
+            forceLabel: isContainerLike && ratio > 1.2,
+          }
+        }
+
+        const isFocused = node === focusNode
+        const isConnected = focusState.focusNeighbors.has(node)
+        if (isFocused) {
+          return {
+            ...data,
+            color: '#7ef9ff',
+            size: Number(data.size || 6) + 2.8,
+            label: String(data.label || ''),
+            forceLabel: true,
+            labelColor: '#f8fdff',
+            zIndex: 3,
+          }
+        }
+
+        if (isConnected) {
+          return {
+            ...data,
+            color: '#e8f8ff',
+            size: Number(data.size || 6) + 0.6,
+            label: isZoomedOut && !isContainerLike ? '' : String(data.label || ''),
+            forceLabel: true,
+            labelColor: '#f2fbff',
+            zIndex: 2,
+          }
+        }
+
+        return {
+          ...data,
+          color: '#30465d',
+          label: '',
+          labelColor: '#8aa7c5',
+          zIndex: 0,
+        }
+      },
+      edgeReducer: (edge, data) => {
+        if (!focusNode) {
+          if (!showConnections) {
+            return {
+              ...data,
+              hidden: true,
+            }
+          }
+
+          return {
+            ...data,
+            hidden: false,
+            color: 'rgba(238, 248, 255, 0.06)',
+            size: 0.75,
+          }
+        }
+
+        if (focusState.focusEdges.has(edge)) {
+          return {
+            ...data,
+            hidden: false,
+            color: '#63f2ff',
+            size: Number(data.size || 1.2) + 1.2,
+            forceLabel: true,
+            zIndex: 2,
+          }
+        }
+
+        if (!showConnections) {
+          return {
+            ...data,
+            hidden: true,
+            zIndex: 0,
+          }
+        }
+
+        return {
+          ...data,
+          hidden: false,
+          color: 'rgba(238, 248, 255, 0.05)',
+          size: 0.55,
+          zIndex: 0,
+        }
+      },
+    })
+  }, [focusNode, focusState.focusEdges, focusState.focusNeighbors, setSettings, showConnections, sigma])
+
+  useEffect(() => {
     registerEvents({
+      clickStage: () => {
+        onClearSelection()
+      },
+      clickNode: ({ node }) => {
+        onSelectNode(node)
+      },
+      enterNode: ({ node }) => {
+        onHoverNode(node)
+      },
+      leaveNode: () => {
+        onHoverNode(null)
+      },
       doubleClickNode: ({ node }) => {
         const attrs = graph.getNodeAttributes(node)
         onDrill(node, String(attrs.kind || ''))
       },
     })
-  }, [graph, onDrill, registerEvents])
+  }, [graph, onClearSelection, onDrill, onHoverNode, onSelectNode, registerEvents])
 
   return null
 }
@@ -460,6 +739,9 @@ function App() {
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([])
   const [riskSummary, setRiskSummary] = useState('')
   const [condenseSimilarFiles, setCondenseSimilarFiles] = useState(true)
+  const [showConnections, setShowConnections] = useState(false)
+  const [selectedNode, setSelectedNode] = useState<string | null>(null)
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null)
 
   async function runAnalyze() {
     setLoading(true)
@@ -477,6 +759,8 @@ function App() {
       setHighlightPath([])
       setTraceFrom('')
       setTraceTo('')
+      setSelectedNode(null)
+      setHoveredNode(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed')
     } finally {
@@ -587,6 +871,8 @@ function App() {
     setHistory((h) => [...h, view])
     setView({ level: 'containers', containerId: null, fileId: null })
     setHighlightPath([])
+    setSelectedNode(null)
+    setHoveredNode(null)
   }
 
   function goBack() {
@@ -595,6 +881,8 @@ function App() {
     setHistory((h) => h.slice(0, -1))
     setView(prev)
     setHighlightPath([])
+    setSelectedNode(null)
+    setHoveredNode(null)
   }
 
   function runTrace() {
@@ -660,6 +948,15 @@ function App() {
                 type="checkbox"
                 checked={condenseSimilarFiles}
                 onChange={(e) => setCondenseSimilarFiles(e.target.checked)}
+              />
+            </label>
+            <label className="toggle-row" htmlFor="showConnections">
+              <span>Show background edges</span>
+              <input
+                id="showConnections"
+                type="checkbox"
+                checked={showConnections}
+                onChange={(e) => setShowConnections(e.target.checked)}
               />
             </label>
             <div className="button-row">
@@ -746,17 +1043,34 @@ function App() {
         <main className="graph-stage" aria-label="Architecture graph">
           <div className="graph-canvas">
             <SigmaContainer
-              style={{ height: '100%' }}
+              style={{
+                height: '100%',
+                backgroundColor: '#081321',
+              }}
               settings={{
                 renderEdgeLabels: false,
-                defaultNodeColor: '#2f81f7',
+                defaultNodeColor: '#69c6ff',
+                defaultEdgeColor: '#3f5c78',
+                labelColor: { attribute: 'labelColor' },
                 labelDensity: 0.08,
                 labelGridCellSize: 120,
                 minCameraRatio: 0.05,
                 maxCameraRatio: 5,
               }}
             >
-              <GraphController graph={graph} onDrill={onDrill} />
+              <GraphController
+                graph={graph}
+                onDrill={onDrill}
+                showConnections={showConnections}
+                selectedNode={selectedNode}
+                hoveredNode={hoveredNode}
+                onSelectNode={setSelectedNode}
+                onClearSelection={() => {
+                  setSelectedNode(null)
+                  setHoveredNode(null)
+                }}
+                onHoverNode={setHoveredNode}
+              />
             </SigmaContainer>
           </div>
         </main>

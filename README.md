@@ -1,66 +1,74 @@
-# Architect v4
+# Architect CLI v4
 
-Architect v4 is a FastAPI backend plus a React frontend for interactive software architecture analysis.
+<p align="center">
+  <strong>Interactive architecture mapping for real codebases.</strong><br/>
+  Scan repositories, infer dependency relationships, and explore the graph in a modern React UI.
+</p>
 
-## Stack
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white" />
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white" />
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111" />
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-Frontend-646CFF?logo=vite&logoColor=white" />
+</p>
 
-- Backend: FastAPI + tree-sitter scanning + optional Ollama-based labeling
-- Frontend: React + Vite + Tailwind + Sigma graph rendering
-- Dev workflow: one command local startup via `make dev`
+## Why Architect CLI
 
-## Run Locally
+- Understand large codebases quickly with dependency-focused architecture views.
+- Analyze with or without LLM labels (`hints` mode is very fast and deterministic).
+- Navigate results in an interactive frontend (search, filtering, focused exploration).
+- Keep results reusable with persisted analysis and label cache files.
+
+## Architecture
+
+- Backend: FastAPI (`architect/api_server.py`)
+- Analyzer core: scanner + dependency resolution + optional LLM labeling (`architect/analysis_core.py`)
+- Frontend: React + Vite + Sigma.js graph rendering (`frontend/`)
+
+## Quick Start
+
+### 1. Install dependencies
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cd frontend && npm install && cd ..
+```
+
+### 2. Start full local stack
 
 ```bash
 make dev
 ```
 
-This starts:
+Services:
 
 - Backend: `http://127.0.0.1:8000`
 - Frontend: `http://127.0.0.1:5173`
 
-## Backend Only
+## API Usage
+
+### Health check
 
 ```bash
-uvicorn architect.api_server:app --host 0.0.0.0 --port 8000
+curl -s http://127.0.0.1:8000/api/health
 ```
 
-Health check:
+### Analyze any repository
 
 ```bash
-curl http://127.0.0.1:8000/api/health
-```
-
-Analyze a repo:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/analyze \
-  -H "Content-Type: application/json" \
+curl -s -X POST http://127.0.0.1:8000/api/analyze \
+  -H 'Content-Type: application/json' \
   -d '{
-    "path": "/Users/kshitijmishra/tinygrad",
+    "path": "/absolute/path/to/repo",
     "no_llm": true,
-    "label_mode": "hints"
+    "label_mode": "hints",
+    "max_edges": 200
   }'
 ```
 
-## Frontend Only
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## Optional LLM Setup
-
-For LLM relationship labels, run Ollama locally and pull a model:
-
-```bash
-ollama serve
-ollama pull qwen2.5-coder:7b
-```
-
-## API Endpoints
+Useful endpoints:
 
 - `GET /api/health`
 - `POST /api/analyze`
@@ -68,57 +76,73 @@ ollama pull qwen2.5-coder:7b
 - `POST /api/risk-analysis`
 - `POST /api/search`
 
-## Notes
+## Tinygrad Example
 
-- Analysis results are persisted in `.architect_analysis_store.json`.
-- LLM edge labels are cached in `.architect_cache.json` unless disabled.
+This project has already been exercised against the `tinygrad` codebase and works well on large dependency graphs.
 
-### 3. Ollama connection errors
+Suggested request for Tinygrad:
 
-Ensure Ollama is running and the model exists:
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "path": "/Users/kshitijmishra/tinygrad",
+    "no_llm": false,
+    "label_mode": "hybrid",
+    "max_edges": 0
+  }'
+```
+
+### Tinygrad UI snapshots
+
+<p>
+  <img src="img/Screenshot 2026-03-07 at 11.20.14 PM.png" alt="Tinygrad architecture view 1" width="49%" />
+  <img src="img/Screenshot 2026-03-07 at 11.21.11 PM.png" alt="Tinygrad architecture view 2" width="49%" />
+</p>
+<p>
+  <img src="img/Screenshot 2026-03-07 at 11.21.56 PM.png" alt="Tinygrad architecture view 3" width="49%" />
+  <img src="img/Screenshot 2026-03-07 at 11.22.01 PM.png" alt="Tinygrad architecture view 4" width="49%" />
+</p>
+
+## LLM Labels (Optional)
+
+To enable semantic relationship labels, run Ollama locally:
 
 ```bash
 ollama serve
-ollama list
 ollama pull qwen2.5-coder:7b
 ```
 
-If needed, switch model:
+Then send analyze requests with `"no_llm": false` and optionally set `"model"`.
+
+## Persistence
+
+- Analysis store: `.architect_analysis_store.json`
+- LLM label cache: `.architect_cache.json`
+
+## Dev Commands
+
+### Backend only
 
 ```bash
-python main.py --path ./my-project --model qwen2.5-coder:7b
+venv/bin/python -m uvicorn architect.api_server:app --host 127.0.0.1 --port 8000
 ```
 
-### 4. Output HTML not opening automatically
-
-Generate without auto-open and open manually:
+### Frontend only
 
 ```bash
-python main.py --path ./my-project --output map.html --no-open
+cd frontend
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-Then open `map.html` in your browser.
-
-### 5. Graph looks too crowded
-
-Use these together:
-
-- Layered mode enabled (default)
-- `Visible Edges` slider
-- `Group Filter`
-- `Focus mode` with depth `1` or `2`
-- `Collapse All` to reset view
-
-## Development
-
-Run tests:
+### Tests
 
 ```bash
-python -m unittest discover -s tests -q
+venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Run a quick syntax check:
+### Docker
 
 ```bash
-python -m py_compile main.py architect/brain.py architect/visualizer.py
+docker compose up --build
 ```
